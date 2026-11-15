@@ -705,6 +705,8 @@ fun ShelfListItem(
     coverSlot: @Composable (Book, Modifier, CoverSlotRatio, Int) -> Unit,
     // 更新时间 Text 注入: 父项不感知 timeTick 心跳
     lastUpdateTextSlot: @Composable () -> Unit,
+    // 简介覆盖: 非空时替代 book.getDisplayIntro() (搜索页正文命中显示上下文预览)
+    introOverride: String? = null,
 ) {
     val colors = AppTheme.colors
     val appConfig = remember { AppConfigProviders.get() }
@@ -797,7 +799,7 @@ fun ShelfListItem(
                 }
             }
             if (forceShowIntro || (showKindIntro && appConfig.bookshelfListShowIntro)) {
-                val intro = remember(book.intro, book.author) { book.getDisplayIntro() }
+                val intro = introOverride ?: remember(book.intro, book.author) { book.getDisplayIntro() }
                 if (!intro.isNullOrBlank()) {
                     Text(
                         text = intro,

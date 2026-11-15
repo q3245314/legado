@@ -146,6 +146,36 @@ class SearchContentViewModelShared(
     }
 
     /**
+     * 在指定书籍所有章节中搜索 query, 返回第一个命中结果 (命中即停)。
+     *
+     * 供书架正文扫描复用: 只需判断有无命中并取一条上下文预览, 不必收集全部结果。
+     * 复用 [searchChapter] 的正文处理 + 子串匹配 + 上下文截取逻辑, 保证预览与阅读页一致。
+     * 不依赖 [cacheChapterNames]: 未缓存章节由 [searchChapter] 内部 getContent 返回 null 跳过,
+     * 行为与原书架扫描 [BookStorageProviders.get].getContent 直读一致。
+     *
+     * @param book 待搜索书籍 (临时写入 [book]/[bookUrl], 调用结束后恢复原值)
+     * @param query 搜索关键词
+     * @return 第一个命中的 [SearchResult], 无命中返回 null
+     */
+    suspend fun findFirstResult(book: Book, query: String): SearchResult? {
+        val prevBook = this.book
+        val prevBookUrl = this.bookUrl
+        this.book = book
+        this.bookUrl = book.bookUrl
+        try {
+            appDb.bookChapterDao.getChapterList(bookUrl).forEach { chapter ->
+                currentCoroutineContext().ensureActive()
+                val results = searchChapter(query, chapter)
+                if (results.isNotEmpty()) return results.first()
+            }
+            return null
+        } finally {
+            this.book = prevBook
+            this.bookUrl = prevBookUrl
+        }
+    }
+
+    /**
      * 在所有已缓存章节内搜索 query, 返回所有匹配结果。
      *
      * 对照原 SearchContentActivity.startContentSearch 的搜索编排逻辑 (下沉到 shared):

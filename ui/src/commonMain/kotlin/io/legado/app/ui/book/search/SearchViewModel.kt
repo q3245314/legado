@@ -8,13 +8,16 @@ import io.legado.app.data.entities.BookSource
 import io.legado.app.data.entities.SearchBook
 import io.legado.app.data.entities.SearchKeyword
 import io.legado.app.help.book.BookFilter
-import io.legado.app.help.book.BookStorageProviders
+import io.legado.app.help.book.chineseS2T
+import io.legado.app.help.book.chineseT2S
 import io.legado.app.help.book.incrementalFilter
 import io.legado.app.help.book.isNotShelf
 import io.legado.app.help.config.AppConfigProviders
 import io.legado.app.help.coroutine.IoDispatcher
 import io.legado.app.help.toast.Toasters
 import io.legado.app.ui.compose.platform.syncGetString
+import io.legado.app.ui.book.searchContent.SearchContentViewModelShared
+import io.legado.app.ui.book.searchContent.SearchResult
 import io.legado.app.model.webBook.ExploreOption
 import io.legado.app.model.webBook.ExploreOptionSelection
 import io.legado.app.model.webBook.ExploreOptionUiState
@@ -322,6 +325,19 @@ class SearchViewModel {
      */
     val bookshelf: MutableSet<String> = newConcurrentSet()
 
+    /**
+     * 书内全文搜索共享实例: 书架正文扫描复用其 [SearchContentViewModelShared.findFirstResult],
+     * 命中即停并返回第一条 [SearchResult] (含上下文预览/章节索引/字符位置),
+     * 保证预览文本与阅读页正文搜索一致 (同样经 ContentProcessor 处理)。
+     */
+    private val contentSearchShared = SearchContentViewModelShared(scope) { type, text ->
+        when (type) {
+            1 -> chineseT2S(text)
+            2 -> chineseS2T(text)
+            else -> text
+        }
+    }
+
     // ---- UI 状态 ----
 
     /** 搜索框文本。 */
@@ -338,6 +354,10 @@ class SearchViewModel {
 
     /** 本地书正文命中的书 (逐本扫描, 命中即停), 与元数据命中合并展示。 */
     private val _contentHitBooks = MutableStateFlow<List<Book>>(emptyList())
+
+    /** 本地书正文命中详情: bookUrl -> 第一条命中结果 (含上下文预览/章节/位置)。 */
+    private val _contentHitResults = MutableStateFlow<Map<String, SearchResult>>(emptyMap())
+    val contentHitResults: StateFlow<Map<String, SearchResult>> = _contentHitResults.asStateFlow()
 
     /** 正在扫描本地书正文 (UI 显示进度提示)。 */
     private val _searchingContent = MutableStateFlow(false)
@@ -510,7 +530,7 @@ class SearchViewModel {
             }
         }
 
-        // 本地书正文搜索: 输入停顿后逐本查找, 命中即停 (只判有无, 不收集章节内结果)
+        // 本地书正文搜索: 输入停顿后逐本查找, 命中即停并取第一条结果 (含上下文预览/章节/位置)
         scope.launch {
             combine(
                 inputHelpVisible,
@@ -520,6 +540,7 @@ class SearchViewModel {
             }.distinctUntilChanged().collectLatest { key ->
                 // 新关键词立即清掉旧命中; 被取消时 finally 复位进度
                 _contentHitBooks.value = emptyList()
+                _contentHitResults.value = emptyMap()
                 _searchingContent.value = false
                 if (key.isBlank()) return@collectLatest
                 val localBooks = withContext(IoDispatcher) {
@@ -531,9 +552,18 @@ class SearchViewModel {
                     // 读正文是重 IO: 整轮扫描切到 IO 线程
                     withContext(IoDispatcher) {
                         localBooks.forEach { book ->
-                            if (localBookContains(book, key)) {
-                                _contentHitBooks.update { it + book }
-                            }
+                            // 复用 SearchContentViewModelShared.findFirstResult: 命中即停,
+                            // 返回第一条 SearchResult (resultText 为上下文预览, chapterIndex/
+                            // queryIndexInChapter 用于点击跳转定位)
+                            val result = try {
+                                contentSearchShared.findFirstResult(book, key)
+                            } catch (e: CancellationException) {
+                                throw e
+                            } catch (e: Exception) {
+                                null
+                            } ?: return@forEach
+                            _contentHitBooks.update { it + book }
+                            _contentHitResults.update { it + (book.bookUrl to result) }
                         }
                     }
                 } finally {
@@ -541,34 +571,6 @@ class SearchViewModel {
                 }
             }
         }
-    }
-
-    /**
-     * 该书任一章节正文是否包含 [key] (命中即停, 只用于书架命中筛选)。
-     *
-     * 正文取数与书内全文搜索同源 ([BookStorageProviders.getContent]); 单本读失败
-     * 只跳过该书, 不中断整轮扫描。协程取消经 [ensureActive] 生效。
-     */
-    private suspend fun localBookContains(book: Book, key: String): Boolean {
-        val chapters = try {
-            AppDbProviders.get().bookChapterDao.getChapterList(book.bookUrl)
-        } catch (e: CancellationException) {
-            throw e
-        } catch (e: Exception) {
-            return false
-        }
-        for (chapter in chapters) {
-            currentCoroutineContext().ensureActive()
-            val content = try {
-                BookStorageProviders.get().getContent(book, chapter)
-            } catch (e: CancellationException) {
-                throw e
-            } catch (e: Exception) {
-                null
-            } ?: continue
-            if (content.contains(key, ignoreCase = true)) return true
-        }
-        return false
     }
 
     fun isInBookShelf(book: BaseBook): Boolean {

@@ -29,6 +29,7 @@ import io.legado.app.ui.book.search.SearchNavCallbacks
 import io.legado.app.ui.book.search.SearchScopeDialog
 import io.legado.app.ui.book.search.SearchScreen
 import io.legado.app.ui.book.search.SearchViewModel
+import io.legado.app.ui.book.searchContent.SearchResult
 import io.legado.app.ui.compose.component.AlertButton
 import io.legado.app.ui.compose.component.AppAlertDialog
 import io.legado.app.ui.compose.platform.AppBackHandler
@@ -166,6 +167,17 @@ fun SearchRoute(
                     )
                     else -> navigator.push(AppRoute.BookInfo(ref), sharedToken = sharedToken)
                 }
+            }
+
+            // 书架正文命中结果: 直达阅读页并定位到命中章节/字符位置
+            override fun onContentHitClick(book: Book, searchResult: SearchResult) {
+                navigator.push(
+                    AppRoute.Reader(
+                        book = book.copy().toRouteRef(),
+                        chapterIndex = searchResult.chapterIndex,
+                        chapterPos = searchResult.queryIndexInChapter,
+                    )
+                )
             }
 
             override fun onManageBookSources() {

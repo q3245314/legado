@@ -68,6 +68,7 @@ import io.legado.app.model.webBook.ExploreOptionUiState
 import io.legado.app.model.webBook.PluginFilterSession
 import io.legado.app.model.webBook.SEARCH_LAYOUT_SOURCE_GROUP
 import io.legado.app.model.webBook.SourceSearchGroup
+import io.legado.app.ui.book.searchContent.SearchResult
 import io.legado.app.ui.main.home.SectionCoverRow
 import androidx.compose.foundation.lazy.staggeredgrid.items
 import androidx.compose.foundation.lazy.staggeredgrid.rememberLazyStaggeredGridState
@@ -144,6 +145,12 @@ interface SearchNavCallbacks {
     /** 点击书籍 (补 notShelf type 后进详情, 宿主实现跳转); [sharedToken] = 被点封面自签的共享配对 token。 */
     fun onBookClick(book: BaseBook, longClick: Boolean = false, sharedToken: String? = null)
 
+    /**
+     * 点击书架正文命中结果: 跳转到阅读界面并定位到 [searchResult] 所在章节/字符位置。
+     * 宿主实现通常 push [AppRoute.Reader(book, chapterIndex, queryIndexInChapter)]。
+     */
+    fun onContentHitClick(book: Book, searchResult: SearchResult)
+
     /** 按源分类区块标题点击: 进单源搜索结果页 (发现 show 界面, 数据走 [source] 的搜索 url)。 */
     fun onSourceSectionClick(source: BookSource, keyword: String)
 
@@ -176,6 +183,7 @@ interface SearchNavCallbacks {
 object NoOpSearchNavCallbacks : SearchNavCallbacks {
     override fun onBack() {}
     override fun onBookClick(book: BaseBook, longClick: Boolean, sharedToken: String?) {}
+    override fun onContentHitClick(book: Book, searchResult: SearchResult) {}
     override fun onSourceSectionClick(source: BookSource, keyword: String) {}
     override fun onManageBookSources() {}
     override fun onAlertSearchScope() {}
@@ -245,6 +253,7 @@ fun SearchScreen(
     val inputHelpVisible by viewModel.inputHelpVisible.collectAsState()
     val historyKeys by viewModel.historyKeys.collectAsState()
     val bookshelfBooks by viewModel.bookshelfBooks.collectAsState()
+    val contentHitResults by viewModel.contentHitResults.collectAsState()
     val searchingContent by viewModel.searchingContent.collectAsState()
     val resultBooks by viewModel.searchBooks.collectAsState(initial = emptyList())
     val searchGroups by viewModel.searchGroups.collectAsState(initial = emptyList<SourceSearchGroup>())
@@ -377,6 +386,7 @@ fun SearchScreen(
                             viewModel = viewModel,
                             navCallbacks = navCallbacks,
                             bookshelfBooks = bookshelfBooks,
+                            contentHitResults = contentHitResults,
                             historyKeys = historyKeys,
                             spanCount = spanCount,
                             styleIsVideo = styleIsVideo,
@@ -585,6 +595,7 @@ private fun ColumnScope.InputHelp(
     viewModel: SearchViewModel,
     navCallbacks: SearchNavCallbacks,
     bookshelfBooks: List<io.legado.app.data.entities.Book>,
+    contentHitResults: Map<String, SearchResult>,
     historyKeys: List<SearchKeyword>,
     spanCount: Int,
     styleIsVideo: Boolean,
@@ -646,6 +657,8 @@ private fun ColumnScope.InputHelp(
             items(bookshelfBooks, key = { it.bookUrl }) { book ->
                 // 共享配对身份按条目下发 (被点的封面 = 出发端, token 由页面+区块+条目派生)
                 val binding = rememberSharedCoverSourceBinding(book.bookUrl, "search-shelf")
+                // 正文命中结果: 非空表示该书在正文中搜到关键词, 点击跳转至原文位置
+                val contentHit = contentHitResults[book.bookUrl]
                 CompositionLocalProvider(LocalSharedCoverBinding provides binding) {
                     when {
                         // 视频网格卡 (cols>=1 且视频, 对照 ExploreShow 视频卡分支)
@@ -653,7 +666,8 @@ private fun ColumnScope.InputHelp(
                             book = book,
                             coverReloadTick = bookshelfVersion,
                             onClick = {
-                                navCallbacks.onBookClick(book, sharedToken = binding.pageToken)
+                                if (contentHit != null) navCallbacks.onContentHitClick(book, contentHit)
+                                else navCallbacks.onBookClick(book, sharedToken = binding.pageToken)
                             },
                             onLongClick = {
                                 navCallbacks.onBookClick(book, true, binding.pageToken)
@@ -670,7 +684,8 @@ private fun ColumnScope.InputHelp(
                             showLastUpdateTime = true,
                             showKindIntro = true,
                             onClick = {
-                                navCallbacks.onBookClick(book, sharedToken = binding.pageToken)
+                                if (contentHit != null) navCallbacks.onContentHitClick(book, contentHit)
+                                else navCallbacks.onBookClick(book, sharedToken = binding.pageToken)
                             },
                             onLongClick = {
                                 navCallbacks.onBookClick(book, true, binding.pageToken)
@@ -688,6 +703,8 @@ private fun ColumnScope.InputHelp(
                                     remember { mutableIntStateOf(0) },
                                 )
                             },
+                            // 正文命中时用上下文预览替代简介
+                            introOverride = contentHit?.resultText,
                         )
 
                         // 多列网格卡 (cols>=2 非视频)
@@ -696,7 +713,8 @@ private fun ColumnScope.InputHelp(
                             coverReloadTick = bookshelfVersion,
                             refreshingUrls = emptySet(),
                             onClick = {
-                                navCallbacks.onBookClick(book, sharedToken = binding.pageToken)
+                                if (contentHit != null) navCallbacks.onContentHitClick(book, contentHit)
+                                else navCallbacks.onBookClick(book, sharedToken = binding.pageToken)
                             },
                             onLongClick = {
                                 navCallbacks.onBookClick(book, true, binding.pageToken)
