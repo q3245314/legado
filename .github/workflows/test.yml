@@ -142,7 +142,6 @@ jobs:
           if-no-files-found: ignore
 
       - name: Post (原包名) to Telegram
-        # 时序在共存构建前: 此时 apk/ 仅含原包名产物, 通配不会带出共存包
         if: github.event_name != 'pull_request' && needs.prepare.outputs.telegram == 'yes'
         uses: xireiki/channel-post@v1
         with:
@@ -154,20 +153,8 @@ jobs:
           path: apk/*.apk
           method: sendFile
 
-      # --- 接着编译共存版 ---
-      - name: Build ReleaseA (共存)
-        # -PcoexistBuild=true 一并决定 applicationIdSuffix (.releaseA) 与 APK 名后缀 (_releaseA);
-        # 后者是应用内更新识别渠道变体的依据 (AppReleaseInfo), 也让两个变体产物不互相覆盖
-        # -x lintVitalAppRelease: 共存版与原包名同一份源码、同一个工作区, lint 只看源码与依赖,
-        # 两遍结论相同; 实测该 lint 单次 2~11 分钟 (安卓构建耗时的一半以上), 不重复跑
-        run: |
-          echo "开始${{ env.product }}共存构建"
-          ./gradlew assemble${{ env.product }}release -PappVersion=$VERSION -PcoexistBuild=true -x lintVitalAppRelease $GRADLE_ARGS
-          echo "收集共存版APK"
-          find app/build/outputs/renamed-apks -name "*.apk" -exec mv {} apk/ \;
-
-      # 两个变体构建完后一次上传 (原包名 + 共存), 不再分两次
-      - name: Upload Artifacts (原包名 + 共存)
+      # 只上传原包名产物 (共存版已移除)
+      - name: Upload Artifacts (原包名)
         uses: actions/upload-artifact@v6
         with:
           name: ${{ env.product }}.apk
@@ -175,8 +162,7 @@ jobs:
           # 一个 APK 都没搬到就当场失败: 否则 publish 会发出一个只有更新日志的空 Release
           if-no-files-found: error
 
-      # 合并原两次蓝奏上传为一次: 此时 apk/ 含两个变体全部产物
-      - name: Upload To Lanzou (原包名 + 共存)
+      - name: Upload To Lanzou
         if: github.event_name != 'pull_request' && needs.prepare.outputs.lanzou == 'yes'
         continue-on-error: true
         run: |
@@ -184,18 +170,6 @@ jobs:
         env:
           ylogin: ${{ secrets.LANZOU_ID }}
           phpdisk_info: ${{ secrets.LANZOU_PSD }}
-
-      - name: Post (共存) to Telegram
-        if: github.event_name != 'pull_request' && needs.prepare.outputs.telegram == 'yes'
-        uses: xireiki/channel-post@v1
-        with:
-          chat_id: ${{ secrets.CHANNEL_ID }}
-          bot_token: ${{ secrets.BOT_TOKEN }}
-          context: |
-            #阅读 #Legado #Beta ${{ env.VERSION }} (共存)
-            ${{ github.ref_name != 'master' && format('⚠️ 实验性分支: {0}', github.ref_name) || '' }}
-          path: apk/*releaseA*.apk
-          method: sendFile
 
   # ===== 桌面三端 MSI/便携zip/DEB/RPM/DMG (与 Android build 并行) =====
   # 按需构建, 当前关闭: 本仓库只产出 Android APK。
