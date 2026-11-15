@@ -198,12 +198,8 @@ jobs:
           method: sendFile
 
   # ===== 桌面三端 MSI/便携zip/DEB/RPM/DMG (与 Android build 并行) =====
-  # 实现在 _desktop.yml, 与 release.yml 共用同一份。
-  desktop:
-    needs: prepare
-    uses: ./.github/workflows/_desktop.yml
-    with:
-      version: ${{ needs.prepare.outputs.version }}
+  # 按需构建, 当前关闭: 本仓库只产出 Android APK。
+  # 需要时取消下面 desktop job 的注释, 并把 publish 的 needs 加回 desktop。
 
   # ===== 鸿蒙 HAP (CI 不构建, 仅本地; 2026-08-19 查证结论) =====
   # 决策: 维持本地构建, CI 不建鸿蒙 job。原因链如下 (均已实测查证):
@@ -247,11 +243,11 @@ jobs:
   # (华为云镜像下载 commandline-tools 方案对 API 24 工程不适用)。
   # 本仓库当前没有任何 runs-on: [self-hosted, ...] 的既有 job 可照抄, 上面是唯一配方。
 
-  # ===== 统一发布 beta release (全部产物) =====
-  # 等 Android + 桌面三端跑完后一次性发布, 把 APK/MSI/portable zip/DEB/RPM/DMG 全挂上去。
+  # ===== 统一发布 beta release (Android 产物) =====
+  # Android 构建成功后一次性发布 APK 与更新日志。
   publish:
-    needs: [ prepare, build, desktop ]
-    # !cancelled(): 桌面某一端挂了也要把已成功的产物发出去; Android 没出包则不发
+    needs: [ prepare, build ]
+    # !cancelled(): 只发已成功的 Android 产物; 没出包则不发
     if: ${{ !cancelled() && github.event_name != 'pull_request' && needs.build.result == 'success' }}
     permissions:
       contents: write
