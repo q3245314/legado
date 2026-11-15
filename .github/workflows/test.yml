@@ -86,12 +86,18 @@ jobs:
       - name: Release Apk Sign
         # 测试发布与 release.yml 正式发布统一使用同一正式签名密钥 (RELEASE_KEY_STORE secret 注入,
         # 注入方式与 release.yml 逐字同源), beta 包与正式包可直接互相覆盖安装。
+        # fork 未配置密钥时跳过: release 构建自动回落到 debug 签名 (见 app/build.gradle.kts),
+        # 产物仍可安装, 只是无法覆盖已安装的正式渠道包。
         env:
           RS_FILE: ${{ secrets.RELEASE_KEY_STORE }}
           RS_ALIAS: ${{ secrets.RELEASE_KEY_ALIAS }}
           RS_KEY_PASS: ${{ secrets.RELEASE_KEY_PASSWORD }}
           RS_STORE_PASS: ${{ secrets.RELEASE_STORE_PASSWORD }}
         run: |
+          if [ -z "$RS_FILE" ]; then
+            echo "未配置 RELEASE_KEY_STORE, 跳过正式签名 (release 将使用 debug 签名)"
+            exit 0
+          fi
           echo "给apk增加签名"
           echo -e "\n" >> gradle.properties
           echo RELEASE_KEY_ALIAS="$RS_ALIAS" >> gradle.properties
