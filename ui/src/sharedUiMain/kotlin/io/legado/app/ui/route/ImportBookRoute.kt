@@ -22,6 +22,7 @@ import io.legado.app.ui.root.PlatformCapabilityProviders
 import io.legado.app.ui.root.PlatformServiceProviders
 import io.legado.app.ui.root.RouteEntry
 import io.legado.app.ui.root.ScreenModelStore
+import io.legado.app.ui.widget.dialog.WaitDialog
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 
@@ -75,6 +76,9 @@ fun ImportBookRoute(
 
     // 本页用户选择阶段: 阶段归模型, 本组合只呈现
     ImportStageDialog(screenModel.importStages)
+    // 批量导入提示: 成百上千本时逐个落库耗时, 导入期间挡住操作, 完成回调里复位
+    val importing by screenModel.importing.collectAsState()
+    WaitDialog(visible = importing, message = "正在导入…", onDismissRequest = {})
 
     val actions = object : ImportBookUiActions<ImportFileItem> {
         override fun onBack() {
@@ -105,11 +109,13 @@ fun ImportBookRoute(
                 }
                 unsupported.forEach { Toasters.get().toast("不支持的文件: ${it.name}") }
                 if (supported.isEmpty()) return@launch
+                screenModel.setImporting(true)
                 // 条目构造要读文件属性 (含路径映射), 推到 IO; 导入本身在平台自己的作用域里跑
                 withContext(IoDispatcher) {
                     platform.importPickedBookFiles(
                         files = supported,
                         onComplete = {
+                            screenModel.setImporting(false)
                             screenModel.dispatch(ImportBookUiEvent.SelectAll(false))
                             screenModel.dispatch(ImportBookUiEvent.BumpRefreshTick)
                         },
@@ -143,9 +149,11 @@ fun ImportBookRoute(
 
         // 对照 addSelectionToBookshelf: 上架成功后清空 selected + refreshTick++
         override fun onAddSelectionToBookshelf() {
+            screenModel.setImporting(true)
             platform.addImportSelectionToBookshelf(
                 items = state.selected.toList(),
                 onComplete = {
+                    screenModel.setImporting(false)
                     screenModel.dispatch(ImportBookUiEvent.SelectAll(false))
                     screenModel.dispatch(ImportBookUiEvent.BumpRefreshTick)
                 },

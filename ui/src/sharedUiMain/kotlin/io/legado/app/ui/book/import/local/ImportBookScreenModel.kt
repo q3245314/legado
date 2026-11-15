@@ -39,6 +39,14 @@ class ImportBookScreenModel : ScreenModel {
     /** 本页用户选择阶段 (候选/确认): 归本页请求, 由本页组合呈现。 */
     val importStages = ImportStageOwner()
 
+    /** 批量导入进行中 (勾选上架/选文件导入); 归本页请求, 平台完成回调里复位。 */
+    private val _importing = MutableStateFlow(false)
+    val importing: StateFlow<Boolean> = _importing.asStateFlow()
+
+    fun setImporting(importing: Boolean) {
+        _importing.value = importing
+    }
+
     private val _state = MutableStateFlow(
         ImportBookUiState<ImportFileItem>(
             items = emptyList(),
