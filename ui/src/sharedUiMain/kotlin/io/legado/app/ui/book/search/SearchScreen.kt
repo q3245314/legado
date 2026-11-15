@@ -245,6 +245,7 @@ fun SearchScreen(
     val inputHelpVisible by viewModel.inputHelpVisible.collectAsState()
     val historyKeys by viewModel.historyKeys.collectAsState()
     val bookshelfBooks by viewModel.bookshelfBooks.collectAsState()
+    val searchingContent by viewModel.searchingContent.collectAsState()
     val resultBooks by viewModel.searchBooks.collectAsState(initial = emptyList())
     val searchGroups by viewModel.searchGroups.collectAsState(initial = emptyList<SourceSearchGroup>())
     val isSearching by viewModel.isSearching.collectAsState()
@@ -381,6 +382,7 @@ fun SearchScreen(
                             styleIsVideo = styleIsVideo,
                             styleCols = styleCols,
                             bookshelfVersion = bookshelfVersion,
+                            searchingContent = searchingContent,
                             shelfCoverSlot = resolvedShelfCoverSlot,
                             shelfGridState = shelfHelpGridState,
                             historyScrollState = historyHelpScrollState,
@@ -588,6 +590,7 @@ private fun ColumnScope.InputHelp(
     styleIsVideo: Boolean,
     styleCols: Int,
     bookshelfVersion: Int,
+    searchingContent: Boolean,
     shelfCoverSlot: @Composable (Book, Modifier, CoverSlotRatio, Int) -> Unit,
     shelfGridState: LazyGridState,
     historyScrollState: ScrollState,
@@ -607,6 +610,21 @@ private fun ColumnScope.InputHelp(
                 )
             }
         }
+    // 本地书正文扫描中: 命中可能陆续出现, 先给一行反馈 (扫描完自动消失)
+    if (searchingContent) {
+        Text(
+            text = "正在搜索书内内容…",
+            color = colors.secondaryText,
+            fontSize = 13.sp,
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(
+                    start = DesignTokens.spacingDefault,
+                    top = DesignTokens.spacingDefault,
+                    end = DesignTokens.spacingDefault,
+                ),
+        )
+    }
     if (bookshelfBooks.isNotEmpty()) {
         Text(
             text = stringResource(Res.string.bookshelf),

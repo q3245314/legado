@@ -8,7 +8,9 @@ import io.legado.app.data.entities.BookSource
 import io.legado.app.data.entities.SearchBook
 import io.legado.app.data.entities.SearchKeyword
 import io.legado.app.help.book.BookFilter
+import io.legado.app.help.book.BookStorageProviders
 import io.legado.app.help.book.incrementalFilter
+import io.legado.app.help.book.isNotShelf
 import io.legado.app.help.config.AppConfigProviders
 import io.legado.app.help.coroutine.IoDispatcher
 import io.legado.app.help.toast.Toasters
@@ -28,12 +30,15 @@ import io.legado.app.utils.systemCurrentTimeMillis
 import io.legado.app.utils.throttleLatest
 import kotlinx.atomicfu.locks.SynchronizedObject
 import kotlinx.atomicfu.locks.synchronized
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.FlowPreview
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.cancel
 import kotlinx.coroutines.channels.BufferOverflow
+import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharedFlow
@@ -41,10 +46,12 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asSharedFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.catch
+import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.conflate
 import kotlinx.coroutines.flow.debounce
 import kotlinx.coroutines.flow.distinctUntilChanged
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.flatMapLatest
 import kotlinx.coroutines.flow.flowOf
 import kotlinx.coroutines.flow.flowOn
@@ -328,6 +335,13 @@ class SearchViewModel {
     private val _bookshelfBooks = MutableStateFlow<List<Book>>(emptyList())
     val bookshelfBooks = _bookshelfBooks.asStateFlow()
 
+    /** 本地书正文命中的书 (逐本扫描, 命中即停), 与元数据命中合并展示。 */
+    private val _contentHitBooks = MutableStateFlow<List<Book>>(emptyList())
+
+    /** 正在扫描本地书正文 (UI 显示进度提示)。 */
+    private val _searchingContent = MutableStateFlow(false)
+    val searchingContent = _searchingContent.asStateFlow()
+
     /** 书架增删时递增, UI 据此重组刷新绿点/徽标。 */
     private val _bookshelfVersion = MutableStateFlow(0)
     val bookshelfVersion = _bookshelfVersion.asStateFlow()
@@ -481,12 +495,79 @@ class SearchViewModel {
                     else AppDbProviders.get().bookDao.searchShelfBooks(firstKey)
                 }
 
-            combine(dbFlow, keysFlow) { list, keys -> list to keys }
+            val metaBooksFlow = combine(dbFlow, keysFlow) { list, keys -> list to keys }
                 .incrementalFilter(skipFirst = true)
-                .flowOn(IoDispatcher).conflate().collect { books ->
-                    _bookshelfBooks.value = books
-                }
+                .flowOn(IoDispatcher).conflate()
+
+            // 正文命中不经 incrementalFilter: 它按书名/作者/简介等元数据做多词过滤,
+            // 会把只在正文里出现的书剔掉
+            combine(metaBooksFlow, _contentHitBooks) { meta, hits ->
+                if (hits.isEmpty()) meta
+                else (meta + hits).distinctBy { it.bookUrl }
+            }.collect { books ->
+                _bookshelfBooks.value = books
+            }
         }
+
+        // 本地书正文搜索: 输入停顿后逐本查找, 命中即停 (只判有无, 不收集章节内结果)
+        scope.launch {
+            combine(
+                inputHelpVisible,
+                bookshelfSearchKeyFlow.debounce(300)
+            ) { visible, key ->
+                if (visible) key.trim() else ""
+            }.distinctUntilChanged().collectLatest { key ->
+                // 新关键词立即清掉旧命中; 被取消时 finally 复位进度
+                _contentHitBooks.value = emptyList()
+                _searchingContent.value = false
+                if (key.isBlank()) return@collectLatest
+                val localBooks = withContext(IoDispatcher) {
+                    // 仅书架内的本地书 (flowLocal 含已移出书架、带 notShelf 标记的条目)
+                    AppDbProviders.get().bookDao.flowLocal().first().filter { !it.isNotShelf }
+                }
+                _searchingContent.value = localBooks.isNotEmpty()
+                try {
+                    // 读正文是重 IO: 整轮扫描切到 IO 线程
+                    withContext(IoDispatcher) {
+                        localBooks.forEach { book ->
+                            if (localBookContains(book, key)) {
+                                _contentHitBooks.update { it + book }
+                            }
+                        }
+                    }
+                } finally {
+                    _searchingContent.value = false
+                }
+            }
+        }
+    }
+
+    /**
+     * 该书任一章节正文是否包含 [key] (命中即停, 只用于书架命中筛选)。
+     *
+     * 正文取数与书内全文搜索同源 ([BookStorageProviders.getContent]); 单本读失败
+     * 只跳过该书, 不中断整轮扫描。协程取消经 [ensureActive] 生效。
+     */
+    private suspend fun localBookContains(book: Book, key: String): Boolean {
+        val chapters = try {
+            AppDbProviders.get().bookChapterDao.getChapterList(book.bookUrl)
+        } catch (e: CancellationException) {
+            throw e
+        } catch (e: Exception) {
+            return false
+        }
+        for (chapter in chapters) {
+            currentCoroutineContext().ensureActive()
+            val content = try {
+                BookStorageProviders.get().getContent(book, chapter)
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                null
+            } ?: continue
+            if (content.contains(key, ignoreCase = true)) return true
+        }
+        return false
     }
 
     fun isInBookShelf(book: BaseBook): Boolean {
