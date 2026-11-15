@@ -69,7 +69,7 @@ import io.legado.app.receiver.MediaButtonReceiver
 import io.legado.app.service.BaseReadAloudService
 import io.legado.app.service.ExportBookService
 import io.legado.app.ui.about.UpVersionStore
-import io.legado.app.ui.about.checkUpdateAndPrompt
+// import io.legado.app.ui.about.checkUpdateAndPrompt
 import io.legado.app.ui.about.notifyAppCrash
 import io.legado.app.ui.about.upVersion
 import io.legado.app.ui.association.DeepLinkImportHost
@@ -830,13 +830,13 @@ class MainActivity : BaseComposeActivity(imageBg = false) {
             backupSync()
             // 启动静默检查更新 (对照原版 AppUpdate.check(silent=true)): 无等待框无 toast,
             // 有新版本才弹 updateDialog Overlay
-            if (AppConfig.autoCheckUpdate) {
-                checkUpdateAndPrompt(
-                    silent = true,
-                    latestText = androidAppString("is_latest_version"),
-                    failedLabel = androidAppString("check_update"),
-                )
-            }
+            // if (AppConfig.autoCheckUpdate) {
+            //     checkUpdateAndPrompt(
+            //         silent = true,
+            //         latestText = androidAppString("is_latest_version"),
+            //         failedLabel = androidAppString("check_update"),
+            //     )
+            // }
         }
         viewModel.postLoad()
     }
